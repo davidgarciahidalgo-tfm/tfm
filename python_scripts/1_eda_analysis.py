@@ -19,6 +19,12 @@ SECCION 3: VARIABLES EXOGENAS
 SECCION 4: CORRELACIONES
     - Matriz de correlación entre variables numéricas
 
+SECCION 5: ANALISIS DE ESTACIONARIEDAD (preparación para ADF)
+    - Serie temporal agregada con tendencia
+    - Descomposición de la serie (tendencia, estacionalidad, residuos)
+    - Funciones de autocorrelación (ACF y PACF)
+    - Rolling statistics (media y desviación estándar móviles)
+
 Outputs generados:
     - outputs/figures/: Visualizaciones PNG y HTML
     - outputs/: CSVs con estadísticas de estaciones y correlaciones
@@ -32,6 +38,8 @@ import logging
 import sys
 import time
 import folium
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
 # Configurar paths
 sys.path.append(str(Path(__file__).parent))
@@ -263,6 +271,297 @@ def analyze_correlations(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"[OK] Grafico guardado: correlation_heatmap.png")
 
     return corr_matrix
+
+
+def analyze_stationarity(df: pd.DataFrame) -> dict:
+    """
+    Analiza la estacionariedad de la serie temporal de viajes.
+
+    Genera visualizaciones clave para evaluar estacionariedad antes del test ADF:
+    - Serie temporal agregada con tendencia
+    - Descomposicion de la serie (tendencia, estacionalidad, residuos)
+    - Funciones de autocorrelacion (ACF y PACF)
+    - Rolling statistics (media y desviacion estandar moviles)
+
+    Args:
+        df: DataFrame con los datos de viajes.
+
+    Returns:
+        dict: Diccionario con estadisticas de estacionariedad.
+    """
+    logger.info("\n" + "=" * 80)
+    logger.info("ANÁLISIS DE ESTACIONARIEDAD (Preparación para Test ADF)")
+    logger.info("=" * 80)
+
+    stationarity_stats = {}
+
+    # Crear serie temporal diaria de viajes
+    if 'date' not in df.columns:
+        df['date'] = pd.to_datetime(df['starttime']).dt.date
+
+    daily_trips = df.groupby('date').size()
+    daily_trips.index = pd.to_datetime(daily_trips.index)
+    daily_trips = daily_trips.sort_index()
+
+    logger.info(f"\n[INFO] Serie temporal creada:")
+    logger.info(f"   Periodo: {daily_trips.index.min().strftime('%Y-%m-%d')} a {daily_trips.index.max().strftime('%Y-%m-%d')}")
+    logger.info(f"   Observaciones: {len(daily_trips)}")
+    logger.info(f"   Media: {daily_trips.mean():.2f} viajes/día")
+    logger.info(f"   Desviación estándar: {daily_trips.std():.2f}")
+
+    stationarity_stats['n_observations'] = len(daily_trips)
+    stationarity_stats['mean'] = daily_trips.mean()
+    stationarity_stats['std'] = daily_trips.std()
+
+    # =========================================================================
+    # FIGURA 1: Serie temporal con rolling statistics
+    # =========================================================================
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Análisis de Estacionariedad - Serie Temporal de Viajes Diarios',
+                 fontweight='bold', fontsize=14)
+
+    # (a) Serie temporal original con rolling mean y std
+    ax1 = axes[0, 0]
+    window = 30  # Ventana de 30 días
+
+    rolling_mean = daily_trips.rolling(window=window).mean()
+    rolling_std = daily_trips.rolling(window=window).std()
+
+    ax1.plot(daily_trips.index, daily_trips.values, color='steelblue',
+             alpha=0.5, label='Original', linewidth=0.8)
+    ax1.plot(rolling_mean.index, rolling_mean.values, color='red',
+             linewidth=2, label=f'Media móvil ({window} días)')
+    ax1.plot(rolling_std.index, rolling_std.values, color='green',
+             linewidth=2, label=f'Desv. Est. móvil ({window} días)')
+
+    ax1.set_xlabel('Fecha')
+    ax1.set_ylabel('Número de viajes')
+    ax1.set_title('(a) Serie Original con Rolling Statistics', fontweight='bold')
+    ax1.legend(loc='upper left')
+    ax1.grid(True, alpha=0.3)
+
+    # Añadir texto interpretativo
+    mean_trend = "creciente" if rolling_mean.iloc[-1] > rolling_mean.iloc[window] else "decreciente"
+    std_trend = "variable" if rolling_std.std() > rolling_std.mean() * 0.3 else "estable"
+    ax1.text(0.02, 0.02, f'Tendencia media: {mean_trend}\nVarianza: {std_trend}',
+             transform=ax1.transAxes, fontsize=9, verticalalignment='bottom',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    # (b) Descomposición de la serie temporal - ZOOM en estacionalidad
+    ax2 = axes[0, 1]
+
+    # Realizar descomposición (necesita serie sin NaN y con frecuencia)
+    # Rellenar gaps si existen
+    full_date_range = pd.date_range(start=daily_trips.index.min(),
+                                     end=daily_trips.index.max(), freq='D')
+    daily_trips_filled = daily_trips.reindex(full_date_range).interpolate(method='linear')
+
+    try:
+        decomposition = seasonal_decompose(daily_trips_filled, model='additive', period=7)
+
+        # Zoom en 2 meses para visualizar estacionalidad semanal claramente
+        # Seleccionar un período representativo (verano 2016 para buena actividad)
+        zoom_start = pd.Timestamp('2016-06-01')
+        zoom_end = pd.Timestamp('2016-07-31')
+
+        # Filtrar datos para el período de zoom
+        zoom_mask = (decomposition.seasonal.index >= zoom_start) & (decomposition.seasonal.index <= zoom_end)
+        seasonal_zoom = decomposition.seasonal[zoom_mask]
+        observed_zoom = daily_trips_filled[zoom_mask]
+
+        # Graficar serie original y estacionalidad en el período de zoom
+        ax2.plot(observed_zoom.index, observed_zoom.values,
+                 color='steelblue', linewidth=1, alpha=0.7, label='Serie original')
+        ax2.plot(seasonal_zoom.index, seasonal_zoom.values + observed_zoom.mean(),
+                 color='green', linewidth=2, label='Componente estacional')
+
+        # Marcar los lunes para resaltar el ciclo semanal
+        mondays = seasonal_zoom.index[seasonal_zoom.index.dayofweek == 0]
+        for monday in mondays:
+            ax2.axvline(x=monday, color='orange', linestyle=':', alpha=0.5)
+
+        ax2.set_xlabel('Fecha (Jun-Jul 2016)')
+        ax2.set_ylabel('Número de viajes')
+        ax2.set_title('(b) Estacionalidad Semanal (zoom 2 meses)', fontweight='bold')
+        ax2.legend(loc='upper right', fontsize=8)
+        ax2.grid(True, alpha=0.3)
+
+        # Añadir anotación explicativa
+        ax2.text(0.02, 0.98, 'Líneas naranjas = Lunes\nCiclo semanal de 7 días',
+                 transform=ax2.transAxes, fontsize=8, verticalalignment='top',
+                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        stationarity_stats['trend_strength'] = decomposition.trend.std() / daily_trips.std()
+        stationarity_stats['seasonal_strength'] = decomposition.seasonal.std() / daily_trips.std()
+
+        logger.info(f"\n[INFO] Descomposición de la serie:")
+        logger.info(f"   Fuerza de tendencia: {stationarity_stats['trend_strength']:.3f}")
+        logger.info(f"   Fuerza de estacionalidad: {stationarity_stats['seasonal_strength']:.3f}")
+
+    except Exception as e:
+        logger.warning(f"No se pudo realizar la descomposición: {e}")
+        ax2.text(0.5, 0.5, 'Descomposición no disponible',
+                 transform=ax2.transAxes, ha='center', va='center')
+
+    # (c) Función de Autocorrelación (ACF)
+    ax3 = axes[1, 0]
+    plot_acf(daily_trips_filled.dropna(), ax=ax3, lags=60, alpha=0.05)
+    ax3.set_title('(c) Función de Autocorrelación (ACF)', fontweight='bold')
+    ax3.set_xlabel('Lags (días)')
+    ax3.set_ylabel('Autocorrelación')
+
+    # Añadir anotaciones para patrones
+    ax3.axvline(x=7, color='orange', linestyle='--', alpha=0.7, label='Lag 7 (semanal)')
+    ax3.axvline(x=30, color='purple', linestyle='--', alpha=0.7, label='Lag 30 (mensual)')
+    ax3.legend(loc='upper right', fontsize=8)
+
+    # (d) Función de Autocorrelación Parcial (PACF)
+    ax4 = axes[1, 1]
+    plot_pacf(daily_trips_filled.dropna(), ax=ax4, lags=60, alpha=0.05, method='ywm')
+    ax4.set_title('(d) Función de Autocorrelación Parcial (PACF)', fontweight='bold')
+    ax4.set_xlabel('Lags (días)')
+    ax4.set_ylabel('Autocorrelación parcial')
+
+    ax4.axvline(x=7, color='orange', linestyle='--', alpha=0.7, label='Lag 7 (semanal)')
+    ax4.legend(loc='upper right', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / 'stationarity_analysis.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+    logger.info(f"[OK] Gráfico guardado: stationarity_analysis.png")
+
+    # =========================================================================
+    # FIGURA 2: Análisis detallado para interpretación ADF
+    # =========================================================================
+    fig2, axes2 = plt.subplots(2, 2, figsize=(16, 12))
+    fig2.suptitle('Diagnóstico de Estacionariedad para Test ADF',
+                  fontweight='bold', fontsize=14)
+
+    # (a) Serie diferenciada (primera diferencia)
+    ax2a = axes2[0, 0]
+    diff_series = daily_trips_filled.diff().dropna()
+
+    ax2a.plot(diff_series.index, diff_series.values, color='steelblue',
+              alpha=0.7, linewidth=0.8)
+    ax2a.axhline(y=0, color='red', linestyle='--', linewidth=1)
+    ax2a.axhline(y=diff_series.mean(), color='green', linestyle='-',
+                 linewidth=2, label=f'Media: {diff_series.mean():.2f}')
+    ax2a.fill_between(diff_series.index,
+                      diff_series.mean() - 2*diff_series.std(),
+                      diff_series.mean() + 2*diff_series.std(),
+                      alpha=0.2, color='green', label='±2σ')
+
+    ax2a.set_xlabel('Fecha')
+    ax2a.set_ylabel('Δ Viajes (diferencia)')
+    ax2a.set_title('(a) Serie Diferenciada (1ª diferencia)', fontweight='bold')
+    ax2a.legend(loc='upper right')
+    ax2a.grid(True, alpha=0.3)
+
+    stationarity_stats['diff_mean'] = diff_series.mean()
+    stationarity_stats['diff_std'] = diff_series.std()
+
+    # (b) Distribución de la serie diferenciada
+    ax2b = axes2[0, 1]
+    ax2b.hist(diff_series.values, bins=50, color='steelblue',
+              edgecolor='black', alpha=0.7, density=True)
+
+    # Añadir curva normal teórica
+    from scipy import stats
+    x_range = np.linspace(diff_series.min(), diff_series.max(), 100)
+    normal_curve = stats.norm.pdf(x_range, diff_series.mean(), diff_series.std())
+    ax2b.plot(x_range, normal_curve, 'r-', linewidth=2, label='Normal teórica')
+
+    ax2b.axvline(x=0, color='green', linestyle='--', linewidth=2, label='Cero')
+    ax2b.set_xlabel('Δ Viajes')
+    ax2b.set_ylabel('Densidad')
+    ax2b.set_title('(b) Distribución de la Serie Diferenciada', fontweight='bold')
+    ax2b.legend()
+    ax2b.grid(True, alpha=0.3)
+
+    # Test de normalidad (Jarque-Bera)
+    jb_stat, jb_pvalue = stats.jarque_bera(diff_series.values)
+    ax2b.text(0.02, 0.98, f'Jarque-Bera: {jb_stat:.2f}\np-value: {jb_pvalue:.4f}',
+              transform=ax2b.transAxes, fontsize=9, verticalalignment='top',
+              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    stationarity_stats['jarque_bera_stat'] = jb_stat
+    stationarity_stats['jarque_bera_pvalue'] = jb_pvalue
+
+    # (c) ACF de la serie diferenciada
+    ax2c = axes2[1, 0]
+    plot_acf(diff_series, ax=ax2c, lags=40, alpha=0.05)
+    ax2c.set_title('(c) ACF de Serie Diferenciada', fontweight='bold')
+    ax2c.set_xlabel('Lags (días)')
+    ax2c.set_ylabel('Autocorrelación')
+    ax2c.axvline(x=7, color='orange', linestyle='--', alpha=0.7)
+
+    # (d) Interpretación y guía para ADF
+    ax2d = axes2[1, 1]
+    ax2d.axis('off')
+
+    interpretation_text = f"""
+    INTERPRETACIÓN PARA TEST ADF (Augmented Dickey-Fuller)
+
+    SERIE ORIGINAL:
+    ─────────────────────────────────────────────────────
+    • Media: {daily_trips.mean():.2f} viajes/día
+    • Desv. Est.: {daily_trips.std():.2f}
+    • Observaciones: {len(daily_trips)}
+
+    INDICADORES DE NO ESTACIONARIEDAD:
+    ─────────────────────────────────────────────────────
+    • ACF decae lentamente → Serie no estacionaria
+    • Picos en lag 7 → Estacionalidad semanal
+    • Tendencia visible en rolling mean → Necesita diferenciación
+
+    SERIE DIFERENCIADA (1ª diferencia):
+    ─────────────────────────────────────────────────────
+    • Media: {diff_series.mean():.2f} (≈0 indica estacionariedad)
+    • Desv. Est.: {diff_series.std():.2f}
+    • ACF decae rápidamente → Posible estacionariedad
+
+    RECOMENDACIÓN PARA MODELADO:
+    ─────────────────────────────────────────────────────
+    • Si ADF p-value > 0.05 en serie original:
+      La serie NO es estacionaria, aplicar diferenciación
+
+    • Si ADF p-value ≤ 0.05 en serie diferenciada:
+      La serie diferenciada ES estacionaria
+
+    • Considerar: d=1 para ARIMA, estacionalidad s=7
+    """
+
+    ax2d.text(0.05, 0.95, interpretation_text, transform=ax2d.transAxes,
+              fontsize=10, verticalalignment='top', fontfamily='monospace',
+              bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3))
+    ax2d.set_title('(d) Guía de Interpretación', fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / 'stationarity_adf_diagnostic.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+    logger.info(f"[OK] Gráfico guardado: stationarity_adf_diagnostic.png")
+
+    # =========================================================================
+    # RESUMEN DE INDICADORES
+    # =========================================================================
+    logger.info("\n[INFO] INDICADORES DE ESTACIONARIEDAD:")
+    logger.info("")
+    logger.info("   Serie Original:")
+    logger.info(f"      - Media: {daily_trips.mean():.2f}")
+    logger.info(f"      - Desv. Est.: {daily_trips.std():.2f}")
+    logger.info(f"      - ACF: Decaimiento lento sugiere no estacionariedad")
+    logger.info("")
+    logger.info("   Serie Diferenciada:")
+    logger.info(f"      - Media: {diff_series.mean():.2f} (cercana a 0)")
+    logger.info(f"      - Desv. Est.: {diff_series.std():.2f}")
+    logger.info(f"      - ACF: Decaimiento rápido sugiere estacionariedad")
+    logger.info("")
+    logger.info("   Nota: Ejecutar test ADF en el script de modelado para")
+    logger.info("         confirmar estadísticamente estas observaciones.")
+
+    return stationarity_stats
 
 
 def analyze_basic_stats(df: pd.DataFrame) -> dict:
@@ -744,6 +1043,14 @@ def main():
         corr_matrix = analyze_correlations(df)
 
         # =====================================================================
+        # SECCION 5: ANALISIS DE ESTACIONARIEDAD (preparación para ADF)
+        # =====================================================================
+        logger.info("\n" + "#" * 80)
+        logger.info("# SECCION 5: ANÁLISIS DE ESTACIONARIEDAD (preparación para ADF)")
+        logger.info("#" * 80)
+        stationarity_stats = analyze_stationarity(df)
+
+        # =====================================================================
         # GUARDAR RESULTADOS
         # =====================================================================
         station_stats_path = OUTPUTS_DIR / 'station_statistics.csv'
@@ -752,6 +1059,10 @@ def main():
 
         corr_matrix.to_csv(OUTPUTS_DIR / 'correlation_matrix.csv')
         logger.info(f"[OK] Matriz de correlacion guardada: correlation_matrix.csv")
+
+        stationarity_df = pd.DataFrame([stationarity_stats])
+        stationarity_df.to_csv(OUTPUTS_DIR / 'stationarity_statistics.csv', index=False)
+        logger.info(f"[OK] Estadisticas de estacionariedad guardadas: stationarity_statistics.csv")
 
         # Resumen final
         elapsed_time = time.time() - start_time
@@ -775,6 +1086,10 @@ def main():
 
         logger.info("\n   CORRELACIONES:")
         logger.info("   - correlation_heatmap.png: Heatmap de correlaciones")
+
+        logger.info("\n   ESTACIONARIEDAD (preparación para ADF):")
+        logger.info("   - stationarity_analysis.png: Serie temporal, descomposición, ACF y PACF")
+        logger.info("   - stationarity_adf_diagnostic.png: Serie diferenciada y guía para test ADF")
 
     except Exception as e:
         logger.error(f"Error durante la ejecucion del EDA: {e}")
