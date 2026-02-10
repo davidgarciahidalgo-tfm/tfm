@@ -1,0 +1,303 @@
+import { supabase } from '../config/supabase'
+import bcrypt from 'bcryptjs'
+
+export interface UserData {
+  id: string
+  email: string
+  username: string
+  firstName: string
+  lastName: string
+  role: {
+    id: string
+    name: string
+  }
+  companyId?: string
+  companyName?: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateUserInput {
+  email: string
+  username: string
+  password: string
+  firstName: string
+  lastName: string
+  roleId: string
+  companyId?: string
+}
+
+export interface UpdateUserInput {
+  email?: string
+  username?: string
+  password?: string
+  firstName?: string
+  lastName?: string
+  roleId?: string
+  companyId?: string
+  isActive?: boolean
+}
+
+export const userService = {
+  /**
+   * Obtener todos los usuarios
+   */
+  async getUsers(): Promise<UserData[]> {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select(`
+          *,
+          roles!inner (
+            id,
+            name
+          ),
+          companies (
+            id,
+            name
+          )
+        `)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      return (data || []).map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: {
+          id: user.roles?.id || '',
+          name: user.roles?.name || 'operator',
+        },
+        companyId: user.company_id || undefined,
+        companyName: user.companies?.name || undefined,
+        isActive: user.is_active,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+      }))
+    } catch (error: any) {
+      console.error('Get users error:', error)
+      throw new Error('Error al obtener usuarios')
+    }
+  },
+
+  /**
+   * Obtener un usuario por ID
+   */
+  async getUserById(id: string): Promise<UserData> {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select(`
+          *,
+          roles!inner (
+            id,
+            name
+          ),
+          companies (
+            id,
+            name
+          )
+        `)
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Usuario no encontrado')
+
+      return {
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        firstName: data.first_name,
+        lastName: data.last_name,
+        role: {
+          id: (data.roles as any)?.id || '',
+          name: (data.roles as any)?.name || 'operator',
+        },
+        companyId: data.company_id || undefined,
+        companyName: (data.companies as any)?.name || undefined,
+        isActive: data.is_active,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      }
+    } catch (error: any) {
+      console.error('Get user by id error:', error)
+      throw new Error('Error al obtener usuario')
+    }
+  },
+
+  /**
+   * Crear nuevo usuario
+   */
+  async createUser(input: CreateUserInput): Promise<UserData> {
+    try {
+      // Hash de la contraseña
+      const passwordHash = await bcrypt.hash(input.password, 10)
+
+      const { data, error } = await supabase
+        .from('users')
+        .insert({
+          email: input.email,
+          username: input.username,
+          password_hash: passwordHash,
+          first_name: input.firstName,
+          last_name: input.lastName,
+          role_id: input.roleId,
+          company_id: input.companyId || null,
+          is_active: true,
+        })
+        .select(`
+          id,
+          email,
+          username,
+          first_name,
+          last_name,
+          company_id,
+          is_active,
+          last_login_at,
+          created_at,
+          updated_at,
+          roles (
+            id,
+            name,
+            description
+          ),
+          companies (
+            id,
+            name
+          )
+        `)
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Error al crear usuario')
+
+      return {
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        firstName: data.first_name,
+        lastName: data.last_name,
+        role: {
+          id: (data.roles as any)?.id || '',
+          name: (data.roles as any)?.name || 'viewer',
+          description: (data.roles as any)?.description,
+        },
+        companyId: data.company_id || undefined,
+        companyName: (data.companies as any)?.name || undefined,
+        isActive: data.is_active,
+        lastLoginAt: data.last_login_at,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      }
+    } catch (error: any) {
+      console.error('Create user error:', error)
+      
+      if (error.message?.includes('unique')) {
+        throw new Error('El email o username ya está en uso')
+      }
+      
+      throw new Error('Error al crear usuario')
+    }
+  },
+
+  /**
+   * Actualizar usuario
+   */
+  async updateUser(id: string, input: UpdateUserInput): Promise<UserData> {
+    try {
+      const updateData: any = {}
+
+      if (input.email) updateData.email = input.email
+      if (input.username) updateData.username = input.username
+      if (input.firstName) updateData.first_name = input.firstName
+      if (input.lastName) updateData.last_name = input.lastName
+      if (input.roleId) updateData.role_id = input.roleId
+      if (input.companyId !== undefined) updateData.company_id = input.companyId || null
+      if (input.isActive !== undefined) updateData.is_active = input.isActive
+
+      // Si hay contraseña nueva, hashearla
+      if (input.password) {
+        updateData.password_hash = await bcrypt.hash(input.password, 10)
+      }
+
+      const { data, error } = await supabase
+        .from('users')
+        .update(updateData)
+        .eq('id', id)
+        .select(`
+          id,
+          email,
+          username,
+          first_name,
+          last_name,
+          company_id,
+          is_active,
+          last_login_at,
+          created_at,
+          updated_at,
+          roles (
+            id,
+            name,
+            description
+          ),
+          companies (
+            id,
+            name
+          )
+        `)
+        .single()
+
+      if (error) throw error
+      if (!data) throw new Error('Usuario no encontrado')
+
+      return {
+        id: data.id,
+        email: data.email,
+        username: data.username,
+        firstName: data.first_name,
+        lastName: data.last_name,
+        role: {
+          id: (data.roles as any)?.id || '',
+          name: (data.roles as any)?.name || 'viewer',
+          description: (data.roles as any)?.description,
+        },
+        companyId: data.company_id || undefined,
+        companyName: (data.companies as any)?.name || undefined,
+        isActive: data.is_active,
+        lastLoginAt: data.last_login_at,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      }
+    } catch (error: any) {
+      console.error('Update user error:', error)
+      
+      if (error.message?.includes('unique')) {
+        throw new Error('El email o username ya está en uso')
+      }
+      
+      throw new Error('Error al actualizar usuario')
+    }
+  },
+
+  /**
+   * Eliminar usuario
+   */
+  async deleteUser(id: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+    } catch (error: any) {
+      console.error('Delete user error:', error)
+      throw new Error('Error al eliminar usuario')
+    }
+  },
+}

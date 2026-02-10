@@ -1,0 +1,524 @@
+import { useState } from 'react'
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+  Chip,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Avatar,
+  Alert,
+} from '@mui/material'
+import {
+  Add,
+  Edit,
+  Delete,
+} from '@mui/icons-material'
+
+interface User {
+  id: string
+  firstName: string
+  lastName: string
+  username: string
+  email: string
+  role: {
+    id: string
+    name: string
+  }
+  companyId?: string
+  companyName?: string
+  status: 'active' | 'inactive'
+  createdAt: string
+}
+
+const UsersPage = () => {
+  // Datos mock iniciales
+  const [users, setUsers] = useState<User[]>([
+    {
+      id: '1',
+      firstName: 'Admin',
+      lastName: 'Usuario',
+      username: 'superadmin',
+      email: 'admin@mobility.com',
+      role: { id: '1', name: 'superadmin' },
+      status: 'active',
+      createdAt: '2024-01-15T10:00:00Z',
+    },
+    {
+      id: '2',
+      firstName: 'Carlos',
+      lastName: 'García',
+      username: 'cgarcia',
+      email: 'carlos@example.com',
+      role: { id: '2', name: 'admin' },
+      companyId: '1',
+      companyName: 'Mobility Solutions SA',
+      status: 'active',
+      createdAt: '2024-02-20T14:30:00Z',
+    },
+    {
+      id: '3',
+      firstName: 'Ana',
+      lastName: 'Martínez',
+      username: 'amartinez',
+      email: 'ana@example.com',
+      role: { id: '3', name: 'operator' },
+      companyId: '1',
+      companyName: 'Mobility Solutions SA',
+      status: 'active',
+      createdAt: '2024-03-10T09:15:00Z',
+    },
+  ])
+
+  const [companies] = useState([
+    { id: '1', name: 'Mobility Solutions SA' },
+    { id: '2', name: 'Urban Transport Co.' },
+  ])
+
+  const [roles] = useState([
+    { id: '1', name: 'superadmin' },
+    { id: '2', name: 'admin' },
+    { id: '3', name: 'operator' },
+  ])
+
+  const [error, setError] = useState<string | null>(null)
+  const [openDialog, setOpenDialog] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [formData, setFormData] = useState({
+    firstName: '',
+    lastName: '',
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    roleId: '',
+    companyId: '',
+  })
+
+  const getRoleLabel = (roleName: string) => {
+    const labels: Record<string, string> = {
+      superadmin: 'Super Admin',
+      admin: 'Administrador',
+      operator: 'Operador',
+      viewer: 'Visualizador',
+    }
+    return labels[roleName] || roleName
+  }
+
+  const getRoleColor = (roleName: string) => {
+    const colors: Record<string, any> = {
+      superadmin: 'error',
+      admin: 'primary',
+      operator: 'warning',
+      viewer: 'default',
+    }
+    return colors[roleName] || 'default'
+  }
+
+  const handleOpenDialog = (user?: User) => {
+    if (user) {
+      setSelectedUser(user)
+      setFormData({
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+        email: user.email,
+        password: '',
+        confirmPassword: '',
+        roleId: user.role.id,
+        companyId: user.companyId || '',
+      })
+    } else {
+      setSelectedUser(null)
+      setFormData({
+        firstName: '',
+        lastName: '',
+        username: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
+        roleId: '',
+        companyId: '',
+      })
+    }
+    setOpenDialog(true)
+    setError(null)
+  }
+
+  const handleCloseDialog = () => {
+    setOpenDialog(false)
+    setSelectedUser(null)
+    setError(null)
+  }
+
+  const validateForm = () => {
+    if (!formData.firstName.trim()) {
+      setError('El nombre es obligatorio')
+      return false
+    }
+    if (!formData.lastName.trim()) {
+      setError('Los apellidos son obligatorios')
+      return false
+    }
+    if (!formData.username.trim()) {
+      setError('El nombre de usuario es obligatorio')
+      return false
+    }
+    if (!formData.email.trim() || !formData.email.includes('@')) {
+      setError('El email es inválido')
+      return false
+    }
+    if (!selectedUser && !formData.password) {
+      setError('La contraseña es obligatoria')
+      return false
+    }
+    if (formData.password && formData.password !== formData.confirmPassword) {
+      setError('Las contraseñas no coinciden')
+      return false
+    }
+    if (formData.password && formData.password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres')
+      return false
+    }
+    if (!formData.roleId) {
+      setError('Debe seleccionar un rol')
+      return false
+    }
+
+    const selectedRole = roles.find(r => r.id === formData.roleId)
+    if (selectedRole?.name !== 'superadmin' && !formData.companyId) {
+      setError('Los usuarios que no son superadmin deben estar asociados a una empresa')
+      return false
+    }
+
+    return true
+  }
+
+  const handleSave = () => {
+    if (!validateForm()) {
+      return
+    }
+
+    const selectedRole = roles.find(r => r.id === formData.roleId)
+    const selectedCompany = companies.find(c => c.id === formData.companyId)
+
+    if (selectedUser) {
+      // Actualizar usuario existente
+      setUsers(prev => prev.map(u => {
+        if (u.id === selectedUser.id) {
+          return {
+            ...u,
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            username: formData.username,
+            email: formData.email,
+            role: {
+              id: formData.roleId,
+              name: selectedRole?.name || u.role.name,
+            },
+            companyId: selectedRole?.name === 'superadmin' ? undefined : formData.companyId,
+            companyName: selectedRole?.name === 'superadmin' ? undefined : selectedCompany?.name,
+          }
+        }
+        return u
+      }))
+    } else {
+      // Crear nuevo usuario
+      const newUser: User = {
+        id: (Math.max(...users.map(u => parseInt(u.id)), 0) + 1).toString(),
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        username: formData.username,
+        email: formData.email,
+        role: {
+          id: formData.roleId,
+          name: selectedRole?.name || '',
+        },
+        companyId: selectedRole?.name === 'superadmin' ? undefined : formData.companyId,
+        companyName: selectedRole?.name === 'superadmin' ? undefined : selectedCompany?.name,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      }
+      setUsers(prev => [...prev, newUser])
+    }
+
+    handleCloseDialog()
+  }
+
+  const handleDelete = (id: string) => {
+    if (!window.confirm('¿Está seguro de que desea eliminar este usuario?')) {
+      return
+    }
+
+    setUsers(prev => prev.filter(u => u.id !== id))
+  }
+
+  return (
+    <Box>
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+      
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h4" fontWeight={600} gutterBottom>
+            Gestión de Usuarios
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Administración de usuarios y asignación a empresas
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          startIcon={<Add />}
+          onClick={() => handleOpenDialog()}
+          sx={{ borderRadius: 2 }}
+        >
+          Nuevo Usuario
+        </Button>
+      </Box>
+
+      <Card>
+        <CardContent sx={{ p: 0 }}>
+          <TableContainer component={Paper} elevation={0}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell><strong>Usuario</strong></TableCell>
+                  <TableCell><strong>Username</strong></TableCell>
+                  <TableCell><strong>Email</strong></TableCell>
+                  <TableCell><strong>Rol</strong></TableCell>
+                  <TableCell><strong>Empresa</strong></TableCell>
+                  <TableCell><strong>Estado</strong></TableCell>
+                  <TableCell align="right"><strong>Acciones</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {users.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No hay usuarios registrados
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  users.map((user) => (
+                    <TableRow key={user.id} hover>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Avatar
+                            sx={{
+                              width: 40,
+                              height: 40,
+                              mr: 2,
+                              bgcolor: 'primary.main',
+                            }}
+                          >
+                            {user.firstName.charAt(0)}{user.lastName.charAt(0)}
+                          </Avatar>
+                          <Box>
+                            <Typography variant="body1" fontWeight={600}>
+                              {user.firstName} {user.lastName}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Creado: {new Date(user.createdAt).toLocaleDateString()}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontFamily="monospace">
+                          {user.username}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{user.email}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={getRoleLabel(user.role.name)}
+                          color={getRoleColor(user.role.name)}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {user.companyName || (user.role.name === 'superadmin' ? 'N/A' : '-')}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={user.status === 'active' ? 'Activo' : 'Inactivo'}
+                          color={user.status === 'active' ? 'success' : 'default'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => handleOpenDialog(user)}
+                        >
+                          <Edit />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleDelete(user.id)}
+                        >
+                          <Delete />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+      </Card>
+
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {selectedUser ? 'Editar Usuario' : 'Nuevo Usuario'}
+        </DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+          <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              label="Nombre"
+              fullWidth
+              required
+              value={formData.firstName}
+              onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+            />
+            <TextField
+              label="Apellidos"
+              fullWidth
+              required
+              value={formData.lastName}
+              onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+            />
+            <TextField
+              label="Nombre de Usuario"
+              fullWidth
+              required
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              helperText="Usuario para iniciar sesión"
+            />
+            <TextField
+              label="Email"
+              type="email"
+              fullWidth
+              required
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            />
+            <TextField
+              label={selectedUser ? "Nueva Contraseña (dejar vacío para no cambiar)" : "Contraseña"}
+              type="password"
+              fullWidth
+              required={!selectedUser}
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              helperText="Mínimo 6 caracteres"
+            />
+            <TextField
+              label="Confirmar Contraseña"
+              type="password"
+              fullWidth
+              required={!selectedUser || !!formData.password}
+              value={formData.confirmPassword}
+              onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              error={formData.password !== formData.confirmPassword && formData.confirmPassword !== ''}
+              helperText={
+                formData.password !== formData.confirmPassword && formData.confirmPassword !== ''
+                  ? 'Las contraseñas no coinciden'
+                  : ''
+              }
+            />
+            <FormControl fullWidth required>
+              <InputLabel>Rol</InputLabel>
+              <Select
+                value={formData.roleId}
+                label="Rol"
+                onChange={(e) => {
+                  const selectedRole = roles.find(r => r.id === e.target.value)
+                  setFormData({ 
+                    ...formData, 
+                    roleId: e.target.value,
+                    companyId: selectedRole?.name === 'superadmin' ? '' : formData.companyId 
+                  })
+                }}
+              >
+                {roles.map((role) => (
+                  <MenuItem key={role.id} value={role.id}>
+                    {getRoleLabel(role.name)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {(() => {
+              const selectedRole = roles.find(r => r.id === formData.roleId)
+              return selectedRole?.name !== 'superadmin' && (
+                <FormControl fullWidth required>
+                  <InputLabel>Empresa</InputLabel>
+                  <Select
+                    value={formData.companyId}
+                    label="Empresa"
+                    onChange={(e) => setFormData({ ...formData, companyId: e.target.value })}
+                  >
+                    {companies.map((company) => (
+                      <MenuItem key={company.id} value={company.id}>
+                        {company.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )
+            })()}
+            {(() => {
+              const selectedRole = roles.find(r => r.id === formData.roleId)
+              return selectedRole?.name === 'superadmin' && (
+                <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  Los usuarios superadmin no requieren estar asociados a una empresa
+                </Typography>
+              )
+            })()}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog}>Cancelar</Button>
+          <Button variant="contained" onClick={handleSave}>
+            {selectedUser ? 'Actualizar' : 'Crear'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  )
+}
+
+export default UsersPage
